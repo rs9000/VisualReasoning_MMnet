@@ -16,7 +16,7 @@ class PG(nn.Module):
     def __init__(self, vocab, question_size, stem_dim, n_answers, batch_size):
         super(PG, self).__init__()
 
-        print("----------- Build Neural Turing machine -----------")
+        print("----------- Build Neural Network -----------")
 
         # Useful variables declaration
         self.question_size = question_size+1
@@ -24,14 +24,12 @@ class PG(nn.Module):
         self.n_answers = n_answers+1
         self.batch_size = batch_size
         self.saved_output = None
+        self.program_tokens = vocab['program_token_to_idx']
+        self.program_idx = vocab['program_idx_to_token']
+        self.conv_dim = self.stem_dim * self.stem_dim * 3 * 3
 
         # Program generator
         self.program_generator = load_program_generator(Path('checkpoint/program_generator.pt'))
-
-        # Layers
-        self.program_tokens = vocab['program_token_to_idx']
-        self.program_idx = vocab['program_idx_to_token']
-        self.conv_dim = self.stem_dim*self.stem_dim*3*3
 
         # Memory
         self.memory = torch.nn.Parameter(torch.Tensor(44, self.conv_dim*4))
@@ -41,6 +39,7 @@ class PG(nn.Module):
         self.exec_unary_module = Exec_unary_module()
         self.exec_binary_module = Exec_binary_module()
 
+        # Layers
         self.stem = nn.Sequential(nn.Conv2d(1024, self.stem_dim, kernel_size=3, padding=1),
                                   nn.ReLU(),
                                   nn.Conv2d(self.stem_dim, self.stem_dim, kernel_size=3, padding=1),
@@ -64,6 +63,7 @@ class PG(nn.Module):
         # Visual embedding
         v = self.stem(feats)
 
+        # Loop on batch
         for b in range(self.batch_size):
             self.read_head.clean_addressing()
             self.saved_output = []
@@ -77,6 +77,7 @@ class PG(nn.Module):
             question_input = torch.unsqueeze(question[b, :], 0)
             prog_var = self.program_generator(question_input)
 
+            # Loop on programs
             for i in reversed(range(prog_var.size(0))):
 
                 # Check most probably program type

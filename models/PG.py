@@ -14,7 +14,7 @@ class PG(nn.Module):
     def __init__(self, vocab, question_size, stem_dim, n_answers, batch_size):
         super(PG, self).__init__()
 
-        print("----------- Build Neural Turing machine -----------")
+        print("----------- Build Neural Network -----------")
 
         # Useful variables declaration
         self.question_size = question_size+1
@@ -22,8 +22,6 @@ class PG(nn.Module):
         self.n_answers = n_answers+1
         self.batch_size = batch_size
         self.saved_output = None
-
-        # Layers
         self.program_tokens = vocab['program_token_to_idx']
         self.program_idx = vocab['program_idx_to_token']
         self.function_modules = {}  # holds our modules
@@ -42,6 +40,7 @@ class PG(nn.Module):
             self.function_modules[module_name] = module
             self.add_module(module_name, module)
 
+        # Layers
         self.stem = nn.Sequential(nn.Conv2d(1024, self.stem_dim, kernel_size=3, padding=1),
                                   nn.ReLU(),
                                   nn.Conv2d(self.stem_dim, self.stem_dim, kernel_size=3, padding=1),
@@ -64,11 +63,13 @@ class PG(nn.Module):
         # Visual embedding
         v = self.stem(feats)
 
+        # Loop on batch
         for b in range(self.batch_size):
             feat_input = v[b, :, :]
             feat_input = torch.unsqueeze(feat_input, 0)
             output = feat_input
 
+            # Loop on programs
             for i in reversed(programs.data[b].cpu().numpy()):
                 module_type = self.program_idx[i]
 

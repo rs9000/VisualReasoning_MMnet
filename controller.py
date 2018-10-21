@@ -6,6 +6,7 @@ torch.manual_seed(1)
 
 
 class LstmEncoder(nn.Module):
+    """ Question Encoder used by SAN models """
     def __init__(self, token_to_idx, rnn_dim, wordvec_dim=300,
                  rnn_num_layers=2, rnn_dropout=0):
         super(LstmEncoder, self).__init__()
@@ -33,12 +34,11 @@ class LstmEncoder(nn.Module):
         idx.requires_grad = False
 
         hs, _ = self.rnn(self.embed(x))
-        # idx = idx.view(N, 1, 1).expand(N, 1, hs.size(2))
-        # H = hs.size(2)
         return hs, idx
 
 
 class StackedAttention(nn.Module):
+    """ Stack attention """
     def __init__(self, input_dim, hidden_dim):
         super(StackedAttention, self).__init__()
         self.Wv = nn.Conv2d(input_dim, hidden_dim, kernel_size=1, padding=0)
@@ -68,11 +68,11 @@ class StackedAttention(nn.Module):
         self.attention_maps = p.data.clone()
 
         v_tilde = (p.expand_as(v) * v).sum(3).sum(2).view(N, D)
-        # next_u = u2 + v_tilde
         return v_tilde
 
 
 class Unary_module(nn.Module):
+    """ Resblock used as unary module """
     def __init__(self, num_input, num_output):
         super(Unary_module, self).__init__()
 
@@ -91,6 +91,7 @@ class Unary_module(nn.Module):
 
 
 class Binary_module(nn.Module):
+    """ Resblock used as binary module """
     def __init__(self, num_input, num_output):
         super(Binary_module, self).__init__()
 
@@ -113,22 +114,24 @@ class Binary_module(nn.Module):
 
 
 class Exec_unary_module(nn.Module):
-        def __init__(self):
-            super(Exec_unary_module, self).__init__()
-            self.saved_map = None
+    """ A without-parameters function to execute unary module"""
+    def __init__(self):
+        super(Exec_unary_module, self).__init__()
+        self.saved_map = None
 
-        def get_map(self):
-            return self.saved_map
+    def get_map(self):
+        return self.saved_map
 
-        def forward(self, x, w1, w2):
-            out = F.relu(F.conv2d(x, w1, padding=1))
-            out = F.conv2d(out, w2, padding=1)
-            out = F.relu(torch.add(x, out))
-            self.saved_map = out[0]
-            return out
+    def forward(self, x, w1, w2):
+        out = F.relu(F.conv2d(x, w1, padding=1))
+        out = F.conv2d(out, w2, padding=1)
+        out = F.relu(torch.add(x, out))
+        self.saved_map = out[0]
+        return out
 
 
 class Exec_binary_module(nn.Module):
+    """ A without-parameters function to execute binary module"""
     def __init__(self):
         super(Exec_binary_module, self).__init__()
 

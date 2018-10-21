@@ -9,7 +9,7 @@ class SAN(nn.Module):
     def __init__(self, vocab, question_size, stem_dim, n_answers, batch_size):
         super(SAN, self).__init__()
 
-        print("----------- Build Neural Turing machine -----------")
+        print("----------- Build Neural Network -----------")
 
         # Useful variables declaration
         self.question_size = question_size+1
@@ -17,9 +17,9 @@ class SAN(nn.Module):
         self.n_answers = n_answers+1
         self.batch_size = batch_size
         self.attention_list = []
+        question_tokens = vocab['question_token_to_idx']
 
         # Layers
-        question_tokens = vocab['question_token_to_idx']
         self.rnn = LstmEncoder(question_tokens, self.stem_dim)
         self.attention = StackedAttention(self.stem_dim, 512)
 
@@ -47,12 +47,17 @@ class SAN(nn.Module):
             v1 = v[b, :, :]
             v1 = torch.unsqueeze(v1, 0)
             q1 = q[b, 0, :]
+
             for i in range(q_len[b]):
+
+                # Attention
                 if i != 0:
                     q1 = q1 + q[b, i, :]
                 q1 = self.attention(v1, q1.view(1, 1, -1))
+
             self.attention_list.append(q1)
 
+        # Classifier
         out = torch.stack(self.attention_list)
         out = torch.squeeze(out, 1)
         out = self.classifier(out)

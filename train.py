@@ -18,8 +18,6 @@ def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--model', type=str, default="PG_endtoend",
                         help='Model: SAN, SAN_wbw, PG, PG_memory', metavar='')
-    parser.add_argument('--fmaps', type=int, default=14*14,
-                        help='Number of features in res-net maps', metavar='')
     parser.add_argument('--question_size', type=int, default=92,
                         help='Number of words in question dictionary', metavar='')
     parser.add_argument('--stem_dim', type=int, default=256,
