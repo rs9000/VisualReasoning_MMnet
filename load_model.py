@@ -16,6 +16,7 @@ def load_model(args, vocab):
                     question_size=args.question_size,
                     n_answers=args.answer_size,
                     batch_size=args.batch_size,
+                    n_channel=args.n_channel
                     ).cuda()
 
     elif modelname == "SAN_wbw":
@@ -24,6 +25,7 @@ def load_model(args, vocab):
                         question_size=args.question_size,
                         n_answers=args.answer_size,
                         batch_size=args.batch_size,
+                        n_channel=args.n_channel
                         ).cuda()
 
     elif modelname == "PG":
@@ -32,6 +34,7 @@ def load_model(args, vocab):
                    question_size=args.question_size,
                    n_answers=args.answer_size,
                    batch_size=args.batch_size,
+                   n_channel=args.n_channel
                    ).cuda()
 
     elif modelname == "PG_memory":
@@ -40,6 +43,7 @@ def load_model(args, vocab):
                           question_size=args.question_size,
                           n_answers=args.answer_size,
                           batch_size=args.batch_size,
+                          n_channel=args.n_channel
                           ).cuda()
 
     elif modelname == "PG_endtoend":
@@ -48,6 +52,7 @@ def load_model(args, vocab):
                             question_size=args.question_size,
                             n_answers=args.answer_size,
                             batch_size=args.batch_size,
+                            n_channel=args.n_channel
                             ).cuda()
 
     return model

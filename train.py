@@ -22,18 +22,20 @@ def parse_arguments():
                         help='Number of words in question dictionary', metavar='')
     parser.add_argument('--stem_dim', type=int, default=256,
                         help='Number of feature-maps ', metavar='')
+    parser.add_argument('--n_channel', type=int, default=1024,
+                        help='Number of features channels ', metavar='')
     parser.add_argument('--answer_size', type=int, default=31,
                         help='Number of words in answers dictionary', metavar='')
-    parser.add_argument('--batch_size', type=int, default=64,
+    parser.add_argument('--batch_size', type=int, default=60,
                         help='Batch size', metavar='')
     parser.add_argument('--min_grad', type=float, default=-10,
                         help='Minimum value of gradient clipping', metavar='')
     parser.add_argument('--max_grad', type=float, default=10,
                         help='Maximum value of gradient clipping', metavar='')
-    parser.add_argument('--loadmodel', type=str, default='./checkpoint/PG_memory.model',
-                        help='The pre-trained model checkpoint', metavar='')
-    parser.add_argument('--savemodel', type=str, default='./checkpoint/PG_memory.model',
-                        help='Name/Path of model checkpoint', metavar='')
+    parser.add_argument('--loadmodel', type=bool, default=False,
+                        help='Load model checkpoint', metavar='')
+    parser.add_argument('--savemodel', type=bool, default=True,
+                        help='Save model checkpoint', metavar='')
 
     return parser.parse_args()
 
@@ -88,8 +90,8 @@ def train_loop(dataloader, args):
                     pic1 = vutils.make_grid(addr, normalize=True, scale_each=True)
                     writer.add_image('Addressing', pic1, t)
 
-            if t % 100 == 0:
-                torch.save(model.state_dict(), args.savemodel)
+            if t % 100 == 0 and args.savemodel:
+                torch.save(model.state_dict(), './checkpoint/' + args.model + '.model')
         epoch += 1
 
 
@@ -100,7 +102,7 @@ if __name__ == "__main__":
     args = parse_arguments()
     writer = SummaryWriter()
 
-    vocab = load_vocab('D://VQA//data//vocab.json')
+    vocab = load_vocab('D://VQA//vocab.json')
 
     train_loader_kwargs = {
         # /nas/softechict/CLEVR_v1.0/data_h5/   D://VQA//data
@@ -121,9 +123,8 @@ if __name__ == "__main__":
     print(model.calculate_num_params())
     print("--------- Start training -----------")
 
-    check_p = Path(args.loadmodel)
-    #if check_p.is_file():
-     #   model.load_state_dict(torch.load(args.loadmodel))
+    if args.loadmodel:
+        model.load_state_dict(torch.load('./checkpoint/' + args.model + '.model'))
 
     dataloader = get_loader(**train_loader_kwargs)
     train_loop(dataloader, args)

@@ -13,7 +13,7 @@ class Flatten(nn.Module):
 
 
 class PG(nn.Module):
-    def __init__(self, vocab, question_size, stem_dim, n_answers, batch_size):
+    def __init__(self, vocab, question_size, stem_dim, n_channel, n_answers, batch_size):
         super(PG, self).__init__()
 
         print("----------- Build Neural Network -----------")
@@ -37,7 +37,7 @@ class PG(nn.Module):
         self.exec_binary_module = Exec_binary_module()
 
         # Layers
-        self.stem = nn.Sequential(nn.Conv2d(1024, self.stem_dim, kernel_size=3, padding=1),
+        self.stem = nn.Sequential(nn.Conv2d(n_channel, self.stem_dim, kernel_size=3, padding=1),
                                   nn.ReLU(),
                                   nn.Conv2d(self.stem_dim, self.stem_dim, kernel_size=3, padding=1),
                                   nn.ReLU()

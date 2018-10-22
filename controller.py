@@ -20,6 +20,13 @@ class LstmEncoder(nn.Module):
                            dropout=rnn_dropout, batch_first=True)
 
     def forward(self, x):
+        '''
+        input
+        - x: question batch_size x question_len
+        returns
+        - hs: question batch_size X question_len X stem_dim
+        - idx = real question len (without null words) : batch_size x 1
+        '''
         N, T = x.size()
         idx = torch.LongTensor(N).fill_(T - 1)
 
@@ -64,7 +71,7 @@ class StackedAttention(nn.Module):
         u_proj = self.Wu(u)  # N x K
         u_proj_expand = u_proj.view(N, K, 1, 1).expand(N, K, H, W)
         h = F.tanh(v_proj + u_proj_expand)
-        p = F.softmax(self.Wp(h).view(N, H * W)).view(N, 1, H, W)
+        p = F.softmax(self.Wp(h).view(N, H * W), -1).view(N, 1, H, W)
         self.attention_maps = p.data.clone()
 
         v_tilde = (p.expand_as(v) * v).sum(3).sum(2).view(N, D)
@@ -114,7 +121,7 @@ class Binary_module(nn.Module):
 
 
 class Exec_unary_module(nn.Module):
-    """ A without-parameters function to execute unary module"""
+    """ A parameters-less function to execute unary module"""
     def __init__(self):
         super(Exec_unary_module, self).__init__()
         self.saved_map = None
@@ -131,7 +138,7 @@ class Exec_unary_module(nn.Module):
 
 
 class Exec_binary_module(nn.Module):
-    """ A without-parameters function to execute binary module"""
+    """ A parameters-less function to execute binary module"""
     def __init__(self):
         super(Exec_binary_module, self).__init__()
 
