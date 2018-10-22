@@ -16,7 +16,7 @@ Visual reasoning modular memory network
 <img src="http://i66.tinypic.com/15e7hpx.jpg" width="700">
 
 ### Memory-Module Network end2end (PG_endtoend)
-<img src="http://i67.tinypic.com/ml2p04.jpg" width="700">
+<img src="http://i67.tinypic.com/ml2p04.jpg" width="850">
 
 
 
