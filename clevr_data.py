@@ -40,10 +40,45 @@ class ClevrDataset(Dataset):
     :class:`ClevrDataLoaderNumpy` of a :class:`ClevrDataLoaderH5`, which handle loading the data.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, features, question_h5):
         """ Initialize a ClevrDataset object.
         """
+        self.features = features
 
+        # Parse Questions
+        questions = question_h5['questions']
+        image_indices = question_h5['image_idxs']
+        programs = None
+        if 'programs' in question_h5:
+            programs = question_h5['programs']
+        answers = question_h5['answers']
+
+        assert len(questions) == len(image_indices) == len(answers), \
+            'The questions, image indices, programs, and answers are not all the same size!'
+
+        # questions, image indices, programs, and answers are small enough to load into memory
+        self.all_questions = torch.LongTensor(np.asarray(questions))
+        self.all_image_idxs = torch.LongTensor(np.asarray(image_indices))
+        if programs is not None:
+            self.all_programs = torch.LongTensor(np.asarray(programs)) if programs is not None else None
+        self.all_answers = torch.LongTensor(np.asarray(answers)) if answers is not None else None
+
+    def __getitem__(self, index):
+        question = self.all_questions[index]
+        image_idx = self.all_image_idxs[index]
+        answer = self.all_answers[index] if self.all_answers is not None else None
+        program_seq = self.all_programs[index] if self.all_programs is not None else None
+        feats = torch.FloatTensor(np.asarray(self.features['features'][image_idx]))
+
+        return question, image_idx, feats, answer, program_seq
+
+    def __len__(self):
+        return self.all_questions.size(0)
+
+
+class ClevrDataLoader(DataLoader):
+
+    def __init__(self, **kwargs):
         if 'question_h5' not in kwargs:
             raise ValueError('Must give question_h5')
         if 'feature_h5' not in kwargs:
@@ -52,61 +87,22 @@ class ClevrDataset(Dataset):
         # Read images features
         feature_h5_path = str(kwargs.pop('feature_h5'))
         print('Reading features from ', feature_h5_path)
-        self.features = h5py.File(feature_h5_path, 'r')['features']
+        self.features = h5py.File(feature_h5_path, 'r')
 
-        self.images = None
-        if 'image_h5' in kwargs:
-            image_h5_path = str(kwargs.pop('image_h5'))
-            print('Reading images from ', image_h5_path)
-            self.images = h5py.File(image_h5_path, 'r')['images']
-
-        indices = None
-        if 'indices' in kwargs:
-            indices = kwargs.pop('indices')
-
-        if 'shuffle' not in kwargs:
-            # be nice, and make sure the user knows they aren't shuffling
-            warnings.warn('\n\n\tYou have not provided a \'shuffle\' argument to the data loader.\n'
-                          '\tBe aware that the default behavior is to NOT shuffle the data.\n')
-
-        # Read Questions
+        # Read questions
         question_h5_path = str(kwargs.pop('question_h5'))
-        with h5py.File(question_h5_path) as question_h5:
-            questions = question_h5['questions']
-            image_indices = question_h5['image_idxs']
-            programs = question_h5['programs']
-            answers = question_h5['answers']
+        print('Reading questions from ', question_h5_path)
+        with h5py.File(question_h5_path, 'r') as question_h5:
+            self.dataset = ClevrDataset(self.features, question_h5)
+        kwargs['collate_fn'] = clevr_collate
+        super(ClevrDataLoader, self).__init__(self.dataset, **kwargs)
 
-            assert len(questions) == len(image_indices) == len(programs) == len(answers), \
-                'The questions, image indices, programs, and answers are not all the same size!'
+    def __enter__(self):
+        return self
 
-            # questions, image indices, programs, and answers are small enough to load into memory
-            self.all_questions = torch.LongTensor(np.asarray(questions))
-            self.all_image_idxs = torch.LongTensor(np.asarray(image_indices))
-            self.all_programs = torch.LongTensor(np.asarray(programs))
-            self.all_answers = torch.LongTensor(np.asarray(answers)) if answers is not None else None
-
-        if indices is not None:
-            indices = torch.LongTensor(np.asarray(indices))
-            self.all_questions = self.all_questions[indices]
-            self.all_image_idxs = self.all_image_idxs[indices]
-            self.all_programs = self.all_programs[indices]
-            self.all_answers = self.all_answers[indices]
-
-    def __getitem__(self, index):
-        question = self.all_questions[index]
-        image_idx = self.all_image_idxs[index]
-        answer = self.all_answers[index] if self.all_answers is not None else None
-        program_seq = self.all_programs[index]
-        image = None
-        if self.images is not None:
-            image = torch.FloatTensor(np.asarray(self.images[image_idx]))
-        feats = torch.FloatTensor(np.asarray(self.features[image_idx]))
-
-        return question, image, feats, answer, program_seq
-
-    def __len__(self):
-        return len(self.all_questions)
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.features is not None:
+            self.features.close()
 
 
 def clevr_collate(batch):
@@ -124,11 +120,3 @@ def clevr_collate(batch):
     if transposed[4][0] is not None:
         program_seq_batch = default_collate(transposed[4])
     return [question_batch, image_batch, feat_batch, answer_batch, program_seq_batch]
-
-
-def get_loader(**kwargs):
-
-    dataset = ClevrDataset(**kwargs)
-    dataloader = DataLoader(dataset, batch_size=kwargs.pop('batch_size'),
-                            shuffle=True, num_workers=kwargs.pop('num_workers'), collate_fn=clevr_collate)
-    return dataloader

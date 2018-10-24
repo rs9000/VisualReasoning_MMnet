@@ -104,7 +104,7 @@ class PG(nn.Module):
         return out
 
     def getData(self):
-        return self.function_modules['union'].get_map()
+        return None, None
 
     def calculate_num_params(self):
         """Returns the total number of parameters."""

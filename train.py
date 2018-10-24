@@ -3,12 +3,17 @@ import numpy as np
 import argparse
 from load_model import load_model
 from tensorboardX import SummaryWriter
-from clevr_data import get_loader, load_vocab
+from clevr_data import ClevrDataLoader, load_vocab
 from pathlib import Path
 import torchvision.utils as vutils
+from torchvision import transforms
+from PIL import Image
+from PIL import ImageDraw
+from PIL import ImageFont
+import textwrap
 
 
-def clip_grads(net, args):
+def clip_grads(net):
     parameters = list(filter(lambda p: p.grad is not None, net.parameters()))
     for p in parameters:
         p.grad.data.clamp_(args.min_grad, args.max_grad)
@@ -16,7 +21,7 @@ def clip_grads(net, args):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--model', type=str, default="PG_endtoend",
+    parser.add_argument('--model', type=str, default="PG",
                         help='Model: SAN, SAN_wbw, PG, PG_memory', metavar='')
     parser.add_argument('--question_size', type=int, default=92,
                         help='Number of words in question dictionary', metavar='')
@@ -26,7 +31,7 @@ def parse_arguments():
                         help='Number of features channels ', metavar='')
     parser.add_argument('--answer_size', type=int, default=31,
                         help='Number of words in answers dictionary', metavar='')
-    parser.add_argument('--batch_size', type=int, default=60,
+    parser.add_argument('--batch_size', type=int, default=128,
                         help='Batch size', metavar='')
     parser.add_argument('--min_grad', type=float, default=-10,
                         help='Minimum value of gradient clipping', metavar='')
@@ -36,22 +41,91 @@ def parse_arguments():
                         help='Load model checkpoint', metavar='')
     parser.add_argument('--savemodel', type=bool, default=True,
                         help='Save model checkpoint', metavar='')
+    parser.add_argument('--num_iterations', type=int, default=1000,
+                        help='Num iteration per epoch', metavar='')
+    parser.add_argument('--num_val_samples', type=int, default=1000,
+                        help='Num samples from test dataset', metavar='')
 
     return parser.parse_args()
 
 
-def train_loop(dataloader, args):
+def image_to_tensor(image_path, text):
+    '''
+    Load image file, add text, convert to tensor
+    '''
+    img1 = Image.open(image_path)
+    img1 = img1.crop((0, 0, 450, 500))
+    draw = ImageDraw.Draw(img1)
+    draw.rectangle((0, 320, 450, 500), fill="white")
+    font = ImageFont.truetype('font/Roboto-Black.ttf', size=22)
+    lines = textwrap.wrap(text, width=40)
+    y_text = 320
+    for line in lines:
+        width, height = font.getsize(line)
+        draw.text(((450 - width) / 2, y_text), line, font=font, fill='black')
+        y_text += height
 
+    content_transform = transforms.Compose([
+        transforms.ToTensor()
+    ])
+    pic_tensor = content_transform(img1)
+    return pic_tensor
+
+
+def check_accuracy(val_loader, model, vocab):
     num_correct, num_samples = 0, 0
-    epoch = 0
+    model.eval()
+    torch.set_grad_enabled(False)
 
-    while epoch < 30:
+    for question, image, feats, answers, programs in val_loader:
+        feats = feats.to(device)
+        question = question.to(device)
+        programs = programs.to(device)
+
+        if 'SAN' in args.model or 'endtoend' in args.model:
+            outs = model(feats, question)
+        else:
+            outs = model(feats, programs)
+
+        _, preds = outs.data.cpu().max(1)
+        num_correct += (preds.to('cpu') == answers).sum()
+        num_samples += preds.size(0)
+
+        if num_samples % args.batch_size*3 == 0:
+            image_path = "/nas/softechict/CLEVR_v1.0/images/val/CLEVR_val_" + str(int(image[0])).zfill(6) + ".png"
+            question_text = "Q: "
+            answer_text = vocab['answer_idx_to_token'][int(preds[0])]
+            for q in question[0]:
+                if int(q) == 0:
+                    break
+                if int(q) not in (1, 2, 3):
+                    question_text += vocab['question_idx_to_token'][int(q)] + " "
+            pic = image_to_tensor(image_path, question_text + "?  A: " + answer_text)
+            writer.add_image('Test Images', pic, num_samples)
+
+        if num_samples >= args.num_val_samples or num_samples == len(val_loader):
+            break
+
+    accuracy = float(int(num_correct) / num_samples)
+    model.train()
+    return accuracy
+
+
+def train_loop(model, train_loader, val_loader, vocab):
+
+    criterion = torch.nn.CrossEntropyLoss().cuda()
+    optimizer = torch.optim.Adam(model.parameters(), 1e-04)
+    best_accuracy = float(0)
+    epoch = 0
+    t = 0
+
+    accuracy = check_accuracy(val_loader, model, vocab)
+    writer.add_scalar('Test Accuracy', accuracy, 0)
+
+    while epoch < 1000:
         print('Starting epoch %d' % epoch)
         torch.set_grad_enabled(True)
-        for t, (question, image, feats, answers, programs) in enumerate(dataloader):
-            t += epoch*len(dataloader.dataset)
-            losses = []
-
+        for question, _, feats, answers, programs in train_loader:
             # Check batch_size
             if not (question.size(0) == feats.size(0) and feats.size(0) == args.batch_size):
                 continue
@@ -61,53 +135,59 @@ def train_loop(dataloader, args):
             programs = programs.to(device)
             optimizer.zero_grad()
 
-            if 'SAN' or 'endtoend'in args.model:
+            if 'SAN' in args.model or 'endtoend'in args.model:
                 outs = model(feats, question)
             else:
                 outs = model(feats, programs)
 
-            _, preds = outs.max(1)
-            num_samples += preds.size(0)
+            _, preds = outs.data.cpu().max(1)
 
             loss = criterion(outs, answers.to(device))
             loss.backward()
-            clip_grads(model, args)
+            clip_grads(model)
             optimizer.step()
-            losses += [loss.item()]
 
-            if t % 2 == 0:
-                mean_loss = np.array(losses).mean()
+            if t % 5 == 0:
                 print("Loss: ", loss.item())
-                writer.add_scalar('Mean loss', mean_loss, t)
-                losses = []
+                writer.add_scalar('Train Loss', loss.item(), t+epoch*args.num_iterations)
 
                 if 'SAN' in args.model:
                     att_map = model.getData()
                     pic1 = vutils.make_grid(att_map, normalize=True, scale_each=True)
-                    writer.add_image('Attention Map', pic1, t)
-                else:
+                    writer.add_image('Attention Map', pic1, t+epoch*args.num_iterations)
+                elif "memory" in args.model or "endtoend" in args.model:
                     _, addr = model.getData()
                     pic1 = vutils.make_grid(addr, normalize=True, scale_each=True)
-                    writer.add_image('Addressing', pic1, t)
+                    writer.add_image('Addressing', pic1, t+epoch*args.num_iterations)
 
-            if t % 100 == 0 and args.savemodel:
-                torch.save(model.state_dict(), './checkpoint/' + args.model + '.model')
-        epoch += 1
+            if t >= args.num_iterations:
+                t = 0
+                epoch += 1
+                accuracy = check_accuracy(val_loader, model, vocab)
+                writer.add_scalar('Test Accuracy', accuracy, epoch)
+                if accuracy >= best_accuracy and args.savemodel:
+                    best_accuracy = accuracy
+                    torch.save(model.state_dict(), './checkpoint/' + args.model + '.model')
+                break
+            t += 1
 
 
-if __name__ == "__main__":
+def main():
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    args = parse_arguments()
-    writer = SummaryWriter()
-
-    vocab = load_vocab('D://VQA//vocab.json')
+    vocab = load_vocab('/homes/rdicarlo/scripts/vocab.json')
 
     train_loader_kwargs = {
         # /nas/softechict/CLEVR_v1.0/data_h5/   D://VQA//data
-        'question_h5': Path('D://VQA//data//train_questions.h5'),
-        'feature_h5': Path('D://VQA//data//train_features.h5'),
+        'question_h5': Path('/nas/softechict/CLEVR_v1.0/data_h5/train_questions.h5'),
+        'feature_h5': Path('/nas/softechict/CLEVR_v1.0/data_h5/train_features.h5'),
+        'batch_size': args.batch_size,
+        'num_workers': 0,
+        'shuffle': True
+    }
+
+    val_loader_kwargs = {
+        'question_h5': Path('/nas/softechict/CLEVR_v1.0/data_h5/val_questions.h5'),
+        'feature_h5': Path('/nas/softechict/CLEVR_v1.0/data_h5/val_features.h5'),
         'batch_size': args.batch_size,
         'num_workers': 0,
         'shuffle': True
@@ -116,9 +196,6 @@ if __name__ == "__main__":
     model = load_model(args, vocab)
     print(model)
 
-    criterion = torch.nn.CrossEntropyLoss().cuda()
-    optimizer = torch.optim.Adam(model.parameters(), 1e-04)
-
     print("--------- Number of parameters -----------")
     print(model.calculate_num_params())
     print("--------- Start training -----------")
@@ -126,5 +203,12 @@ if __name__ == "__main__":
     if args.loadmodel:
         model.load_state_dict(torch.load('./checkpoint/' + args.model + '.model'))
 
-    dataloader = get_loader(**train_loader_kwargs)
-    train_loop(dataloader, args)
+    with ClevrDataLoader(**train_loader_kwargs) as train_loader, ClevrDataLoader(**val_loader_kwargs) as val_loader:
+        train_loop(model, train_loader, val_loader, vocab)
+
+
+if __name__ == "__main__":
+    args = parse_arguments()
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    writer = SummaryWriter()
+    main()
