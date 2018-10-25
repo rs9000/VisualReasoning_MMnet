@@ -1,6 +1,9 @@
 # VisualReasoning_MMnet
 Visual reasoning modular memory network
 
+## Test sample
+<img src="http://i68.tinypic.com/2mwcllk.jpg" width="300">
+
 ## Models<br>
 
 ### Stack Attention (SAN)
