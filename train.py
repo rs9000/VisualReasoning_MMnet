@@ -21,7 +21,7 @@ def clip_grads(net):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--model', type=str, default="PG",
+    parser.add_argument('--model', type=str, default="PG_memory",
                         help='Model: SAN, SAN_wbw, PG, PG_memory', metavar='')
     parser.add_argument('--question_size', type=int, default=92,
                         help='Number of words in question dictionary', metavar='')
@@ -45,6 +45,8 @@ def parse_arguments():
                         help='Num iteration per epoch', metavar='')
     parser.add_argument('--num_val_samples', type=int, default=1000,
                         help='Num samples from test dataset', metavar='')
+    parser.add_argument('--batch_multiplier', type=int, default=1,
+                        help='Virtual batch size (min: 1)', metavar='')
 
     return parser.parse_args()
 
@@ -125,6 +127,7 @@ def train_loop(model, train_loader, val_loader, vocab):
     while epoch < 1000:
         print('Starting epoch %d' % epoch)
         torch.set_grad_enabled(True)
+
         for question, _, feats, answers, programs in train_loader:
             # Check batch_size
             if not (question.size(0) == feats.size(0) and feats.size(0) == args.batch_size):
@@ -133,7 +136,6 @@ def train_loop(model, train_loader, val_loader, vocab):
             feats = feats.to(device)
             question = question.to(device)
             programs = programs.to(device)
-            optimizer.zero_grad()
 
             if 'SAN' in args.model or 'endtoend'in args.model:
                 outs = model(feats, question)
@@ -146,6 +148,7 @@ def train_loop(model, train_loader, val_loader, vocab):
             loss.backward()
             clip_grads(model)
             optimizer.step()
+            optimizer.zero_grad()
 
             if t % 5 == 0:
                 print("Loss: ", loss.item())
@@ -156,9 +159,13 @@ def train_loop(model, train_loader, val_loader, vocab):
                     pic1 = vutils.make_grid(att_map, normalize=True, scale_each=True)
                     writer.add_image('Attention Map', pic1, t+epoch*args.num_iterations)
                 elif "memory" in args.model or "endtoend" in args.model:
-                    _, addr = model.getData()
-                    pic1 = vutils.make_grid(addr, normalize=True, scale_each=True)
-                    writer.add_image('Addressing', pic1, t+epoch*args.num_iterations)
+                    addr_u, addr_b = model.getData()
+                    if addr_u:
+                        pic1 = vutils.make_grid(addr_u, normalize=True, scale_each=True)
+                        writer.add_image('Addressing unary', pic1, t + epoch * args.num_iterations)
+                    if addr_b:
+                        pic2 = vutils.make_grid(addr_b, normalize=True, scale_each=True)
+                        writer.add_image('Addressing binary', pic2, t + epoch * args.num_iterations)
 
             if t >= args.num_iterations:
                 t = 0
