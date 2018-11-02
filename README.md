@@ -4,6 +4,12 @@ Visual reasoning modular memory network
 ## Test sample
 <img src="http://i68.tinypic.com/2mwcllk.jpg" width="300">
 
+## Train
+[Orange] Module network (PG) -- *early stopped* <br>
+[Green] Memory-module network (Pg_memory)<br>
+The two models are equivalent<br><br>
+<img src="http://i64.tinypic.com/2n7l2d0.jpg" width="600">
+
 ## Models<br>
 
 ### Stack Attention (SAN)
