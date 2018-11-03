@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 from controller import Exec_unary_module, Exec_binary_module
-from memory import ReadHead
 import numpy as np
 from program_generator import load_program_generator
 from pathlib import Path
@@ -13,7 +12,7 @@ class Flatten(nn.Module):
 
 
 class PG(nn.Module):
-    def __init__(self, vocab, question_size, stem_dim, n_channel, n_answers, batch_size):
+    def __init__(self, vocab, question_size, stem_dim, n_channel, n_answers, batch_size, train_pg):
         super(PG, self).__init__()
 
         print("----------- Build Neural Network -----------")
@@ -24,16 +23,18 @@ class PG(nn.Module):
         self.n_answers = n_answers+1
         self.batch_size = batch_size
         self.saved_output = None
+        self.train_pg = train_pg
         self.program_tokens = vocab['program_token_to_idx']
         self.program_idx = vocab['program_idx_to_token']
         self.conv_dim = self.stem_dim * self.stem_dim * 3 * 3
+        self.addressing = []
 
         # Program generator
         self.program_generator = load_program_generator(Path('checkpoint/program_generator.pt'))
 
         # Memory
-        self.memory = torch.nn.Parameter(torch.Tensor(44, self.conv_dim*4))
-        self.read_head = ReadHead(44, self.conv_dim*4)
+        self.memory = None
+        self.initalize_state()
 
         # Executor
         self.exec_unary_module = Exec_unary_module()
@@ -54,7 +55,6 @@ class PG(nn.Module):
                                         nn.ReLU(inplace=True),
                                         nn.Linear(1024, self.n_answers)  # note no softmax here
                                         )
-        self.initalize_state()
 
     def forward(self, feats, question):
 
@@ -65,7 +65,7 @@ class PG(nn.Module):
 
         # Loop on batch
         for b in range(self.batch_size):
-            self.read_head.clean_addressing()
+            self.addressing = []
             self.saved_output = []
 
             # Features
@@ -75,7 +75,11 @@ class PG(nn.Module):
 
             # Program
             question_input = torch.unsqueeze(question[b, :], 0)
-            prog_var = self.program_generator(question_input)
+
+            if self.train_pg:
+                prog_var = self.program_generator(question_input)
+            else:
+                prog_var = self.program_generator(question_input).detach()
 
             # Loop on programs
             for i in reversed(range(prog_var.size(0))):
@@ -114,10 +118,20 @@ class PG(nn.Module):
         out = self.classifier(out)
         return out
 
+    def read_memory(self, weights=None, idx=None):
+        """ Read from memory (w X M)"""
+        if weights is None:
+            weights = torch.zeros(1, self.memory.size(0)).cuda()
+            weights[0, idx] = 1
+
+        self.addressing.append(weights[0].data)
+        read = torch.mm(weights, self.memory)
+        return read
+
     def load_unary_module(self, progr_var_input):
         """ Read the unary module from memory """
         w = torch.unsqueeze(progr_var_input, 0)
-        mem_read = self.read_head(self.memory, weights=w)
+        mem_read = self.read_memory(weights=w)
         w1, w2, _ = torch.split(mem_read, [self.conv_dim, self.conv_dim, 2 * self.conv_dim], dim=-1)
         w1 = w1.view(self.stem_dim, self.stem_dim, 3, 3)
         w2 = w2.view(self.stem_dim, self.stem_dim, 3, 3)
@@ -126,7 +140,7 @@ class PG(nn.Module):
     def load_binary_module(self, progr_var_input):
         """ Read the binary module from memory """
         w = torch.unsqueeze(progr_var_input, 0)
-        mem_read = self.read_head(self.memory, weights=w)
+        mem_read = self.read_memory(weights=w)
         w1, w2, w3 = torch.split(mem_read, [2 * self.conv_dim, self.conv_dim, self.conv_dim], dim=-1)
         w1 = w1.view(self.stem_dim, self.stem_dim * 2, 3, 3)
         w2 = w2.view(self.stem_dim, self.stem_dim, 3, 3)
@@ -135,9 +149,8 @@ class PG(nn.Module):
 
     def initalize_state(self):
         # Initialize stuff
-        stdev = 1 / (np.sqrt(self.conv_dim*2))
+        stdev = 1 / (np.sqrt(self.conv_dim))
         self.memory = nn.Parameter(nn.init.uniform_((torch.Tensor(44, self.conv_dim*4).cuda()), -stdev, stdev))
-        self.read_head.clean_addressing()
 
     def isBinary(self, module_type):
         # Check program is unary or binary
@@ -148,7 +161,7 @@ class PG(nn.Module):
         return rtn
 
     def getData(self):
-        return self.memory, self.read_head.get_weights()
+        return self.addressing, None
 
     def calculate_num_params(self):
         """Returns the total number of parameters."""
