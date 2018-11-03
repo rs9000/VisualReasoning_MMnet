@@ -21,7 +21,7 @@ def clip_grads(net):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--model', type=str, default="PG_memory",
+    parser.add_argument('--model', type=str, default="PG_endtoend",
                         help='Model: SAN, SAN_wbw, PG, PG_memory', metavar='')
     parser.add_argument('--question_size', type=int, default=92,
                         help='Number of words in question dictionary', metavar='')
@@ -31,7 +31,7 @@ def parse_arguments():
                         help='Number of features channels ', metavar='')
     parser.add_argument('--answer_size', type=int, default=31,
                         help='Number of words in answers dictionary', metavar='')
-    parser.add_argument('--batch_size', type=int, default=128,
+    parser.add_argument('--batch_size', type=int, default=50,
                         help='Batch size', metavar='')
     parser.add_argument('--min_grad', type=float, default=-10,
                         help='Minimum value of gradient clipping', metavar='')
@@ -45,8 +45,10 @@ def parse_arguments():
                         help='Num iteration per epoch', metavar='')
     parser.add_argument('--num_val_samples', type=int, default=1000,
                         help='Num samples from test dataset', metavar='')
-    parser.add_argument('--batch_multiplier', type=int, default=1,
+    parser.add_argument('--batch_multiplier', type=int, default=3,
                         help='Virtual batch size (min: 1)', metavar='')
+    parser.add_argument('--train_pg', type=bool, default=False,
+                        help='Train the program generator', metavar='')
 
     return parser.parse_args()
 
@@ -127,6 +129,7 @@ def train_loop(model, train_loader, val_loader, vocab):
     while epoch < 1000:
         print('Starting epoch %d' % epoch)
         torch.set_grad_enabled(True)
+        count = 1
 
         for question, _, feats, answers, programs in train_loader:
             # Check batch_size
@@ -144,15 +147,19 @@ def train_loop(model, train_loader, val_loader, vocab):
 
             _, preds = outs.data.cpu().max(1)
 
-            loss = criterion(outs, answers.to(device))
+            loss = criterion(outs, answers.to(device)) / args.batch_multiplier
             loss.backward()
-            clip_grads(model)
-            optimizer.step()
-            optimizer.zero_grad()
+
+            count -= 1
+            if count == 0:
+                clip_grads(model)
+                optimizer.step()
+                optimizer.zero_grad()
+                count = args.batch_multiplier
 
             if t % 5 == 0:
-                print("Loss: ", loss.item())
-                writer.add_scalar('Train Loss', loss.item(), t+epoch*args.num_iterations)
+                print("Loss: ", loss.item()*args.batch_multiplier)
+                writer.add_scalar('Train Loss', loss.item()*args.batch_multiplier, t+epoch*args.num_iterations)
 
                 if 'SAN' in args.model:
                     att_map = model.getData()
