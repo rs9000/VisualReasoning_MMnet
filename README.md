@@ -4,8 +4,7 @@ Models in Pytorch for visual reasoning task on Clevr dataset. <br><br>
 https://arxiv.org/pdf/1511.02274.pdf<br><br>
 **Module network**:<br>
 https://arxiv.org/pdf/1705.03633.pdf<br><br>
-
-Yes but what's new? <br>
+Yes, but what's new? <br>
 Try to archive same performance in end-to-end differentiable architecture: <br><br>
 **Module memory network** [new]<br>
 **Module memory network end2toend differentiable** [new] <br>
