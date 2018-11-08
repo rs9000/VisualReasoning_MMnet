@@ -1,5 +1,11 @@
 # VisualReasoning_MMnet
-Visual reasoning modular memory network
+Pytorch implementation of visual reasoning models. <br><br>
+Stack attention:<br>
+https://arxiv.org/pdf/1511.02274.pdf<br>
+Module network:<br>
+https://arxiv.org/pdf/1705.03633.pdf<br>
+Module memory network [new]<br>
+Module memory network differentiable end2toend [new]<br>
 
 ## Test sample
 <img src="http://i68.tinypic.com/2mwcllk.jpg" width="300">
