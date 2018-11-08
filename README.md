@@ -7,14 +7,14 @@ https://arxiv.org/pdf/1705.03633.pdf<br><br>
 Yes, but what's new? <br>
 Try to archive same performance in end-to-end differentiable architecture: <br><br>
 **Module memory network** [new]<br>
-**Module memory network end2toend differentiable** [new] <br>
+**Module memory network end2end differentiable** [new] <br>
 
 ## Test sample
 <img src="http://i68.tinypic.com/2mwcllk.jpg" width="300">
 
 ## Train
 [Orange] Module network (PG) -- *early stopped* <br>
-[Green] Memory-module network (Pg_memory)<br>
+[Green] Module memory network (Pg_memory)<br>
 The two models are equivalent<br><br>
 <img src="http://i64.tinypic.com/2n7l2d0.jpg" width="600">
 
@@ -29,10 +29,10 @@ The two models are equivalent<br><br>
 ### Module Network (PG)
 <img src="http://i68.tinypic.com/2usjuqu.jpg" width="500">
 
-### Memory-Module Network (PG_memory)
+### Module-Memory Network (PG_memory)
 <img src="http://i66.tinypic.com/15e7hpx.jpg" width="700">
 
-### Memory-Module Network end2end (PG_endtoend)
+### Module-Memory Network end2end (PG_endtoend)
 <img src="http://i67.tinypic.com/ml2p04.jpg" width="850">
 
 
