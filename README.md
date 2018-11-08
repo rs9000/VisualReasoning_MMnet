@@ -1,11 +1,14 @@
 # VisualReasoning_MMnet
-Pytorch implementation of visual reasoning models. <br><br>
-Stack attention:<br>
-https://arxiv.org/pdf/1511.02274.pdf<br>
-Module network:<br>
-https://arxiv.org/pdf/1705.03633.pdf<br>
-Module memory network [new]<br>
-Module memory network differentiable end2toend [new]<br>
+Models in Pytorch for visual reasoning task on Clevr dataset. <br><br>
+**Stack attention**:<br>
+https://arxiv.org/pdf/1511.02274.pdf<br><br>
+**Module network**:<br>
+https://arxiv.org/pdf/1705.03633.pdf<br><br>
+
+Yes but what's new? <br>
+Try to archive same performance in end-to-end differentiable architecture: <br><br>
+**Module memory network** [new]<br>
+**Module memory network end2toend differentiable** [new] <br>
 
 ## Test sample
 <img src="http://i68.tinypic.com/2mwcllk.jpg" width="300">
