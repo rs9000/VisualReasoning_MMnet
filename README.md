@@ -16,7 +16,10 @@ Try to archive same performance in end-to-end differentiable architecture: <br><
 [Orange] Module network (PG) -- *early stopped* <br>
 [Green] Module memory network (Pg_memory)<br>
 The two models are equivalent<br><br>
-<img src="http://i64.tinypic.com/2n7l2d0.jpg" width="600">
+<img src="http://i64.tinypic.com/2n7l2d0.jpg" width="600"><br><br>
+[Red] Module memory network end2end (Pg_endtoend)<br><br>
+<img src="http://i67.tinypic.com/2z4iw5g.jpg" width="600">
+
 
 ## Models<br>
 
