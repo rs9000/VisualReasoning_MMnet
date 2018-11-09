@@ -13,9 +13,9 @@ Try to archive same performance in end-to-end differentiable architecture: <br><
 <img src="http://i68.tinypic.com/2mwcllk.jpg" width="300">
 
 ## Train
-Module memory network (Pg_memory)<br><br>
+Module memory network (Pg_memory)<br>
 <img src="http://i63.tinypic.com/5uo7za.jpg" width="600"><br><br>
-Module memory network end2end (Pg_endtoend)<br><br>
+Module memory network end2end (Pg_endtoend)<br>
 <img src="http://i67.tinypic.com/xp671w.jpg" width="600"><br>
 
 ## Models<br>
