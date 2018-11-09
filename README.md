@@ -13,13 +13,10 @@ Try to archive same performance in end-to-end differentiable architecture: <br><
 <img src="http://i68.tinypic.com/2mwcllk.jpg" width="300">
 
 ## Train
-[Orange] Module network (PG) -- *early stopped* <br>
-[Green] Module memory network (Pg_memory)<br>
-The two models are equivalent<br><br>
-<img src="http://i64.tinypic.com/2n7l2d0.jpg" width="600"><br><br>
-[Red] Module memory network end2end (Pg_endtoend)<br><br>
-<img src="http://i67.tinypic.com/2z4iw5g.jpg" width="600">
-
+Module memory network (Pg_memory)<br><br>
+<img src="http://i63.tinypic.com/5uo7za.jpg" width="600"><br><br>
+Module memory network end2end (Pg_endtoend)<br><br>
+<img src="http://i67.tinypic.com/xp671w.jpg" width="600"><br>
 
 ## Models<br>
 
