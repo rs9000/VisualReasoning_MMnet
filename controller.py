@@ -150,7 +150,6 @@ class Exec_binary_module(nn.Module):
     def forward(self, x1, x2, w1, w2, w3):
 
         if x1 is None or x2 is None:
-            print("Error types")
             return x1
 
         x = torch.cat((x1, x2), 1)

@@ -3,7 +3,6 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.dataloader import default_collate
 import torch
 import h5py
-import warnings
 import json
 
 
@@ -68,7 +67,8 @@ class ClevrDataset(Dataset):
         image_idx = self.all_image_idxs[index]
         answer = self.all_answers[index] if self.all_answers is not None else None
         program_seq = self.all_programs[index] if self.all_programs is not None else None
-        feats = torch.FloatTensor(np.asarray(self.features['features'][image_idx]))
+        feats = self.features['features'][image_idx]
+        feats = torch.FloatTensor(np.asarray(feats, dtype=np.float32))
 
         return question, image_idx, feats, answer, program_seq
 

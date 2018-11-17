@@ -31,22 +31,20 @@ import torch.nn as nn
 import numpy as np
 import h5py
 from pathlib import Path
+from torch.distributions import Categorical
 
-__all__ = ['load_model', 'generate_programs']
 
-
-class _Seq2Seq(nn.Module):
+class Seq2Seq(nn.Module):
     def __init__(self,
-                 encoder_vocab_size=100,
-                 decoder_vocab_size=100,
+                 encoder_vocab_size=93,
+                 decoder_vocab_size=44,
                  wordvec_dim=300,
                  hidden_dim=256,
                  rnn_num_layers=2,
                  rnn_dropout=0,
                  null_token=0,
                  start_token=1,
-                 end_token=2,
-                 encoder_embed=None):
+                 end_token=2):
         super().__init__()
         self.encoder_embed = nn.Embedding(encoder_vocab_size, wordvec_dim)
         self.encoder_rnn = nn.LSTM(wordvec_dim, hidden_dim, rnn_num_layers,
@@ -58,6 +56,24 @@ class _Seq2Seq(nn.Module):
         self.NULL = null_token
         self.START = start_token
         self.END = end_token
+        self.policy_history = []
+        self.reset_param()
+
+    def reset_param(self):
+        for name, param in self.encoder_rnn.named_parameters():
+            if 'weight' in name:
+                nn.init.xavier_normal_(param)
+            if 'bias' in name:
+                nn.init.constant_(param, 0)
+
+        for name, param in self.decoder_rnn.named_parameters():
+            if 'weight' in name:
+                nn.init.xavier_normal_(param)
+            if 'bias' in name:
+                nn.init.constant_(param, 0)
+
+        nn.init.xavier_normal_(self.decoder_linear.weight)
+        nn.init.constant_(self.decoder_linear.bias, 0)
 
     def get_dims(self, x=None, y=None):
         V_in = self.encoder_embed.num_embeddings
@@ -75,6 +91,8 @@ class _Seq2Seq(nn.Module):
     def before_rnn(self, x, replace=0):
         N, T = x.size()
         idx = torch.LongTensor(N).fill_(T - 1)
+
+        # Find the last non-null element in each sequence.
         x_cpu = x.cpu()
         for i in range(N):
             for t in range(T - 1):
@@ -91,6 +109,8 @@ class _Seq2Seq(nn.Module):
         h0 = torch.zeros(L, N, H).type_as(embed)
         c0 = torch.zeros(L, N, H).type_as(embed)
         out, _ = self.encoder_rnn(embed, (h0, c0))
+
+        # Pull out the hidden state for the last non-null value in each input
         idx = idx.view(N, 1, 1).expand(N, 1, H)
         return out.gather(1, idx).view(N, H)
 
@@ -114,119 +134,50 @@ class _Seq2Seq(nn.Module):
 
         return output_logprobs, ht, ct
 
-    def forward(self, x, max_length=30):
+    def forward(self, x, max_length=30, mode='soft'):
         N, T = x.size(0), max_length
         encoded = self.encoder(x)
-        y = torch.LongTensor(N, T).fill_(self.NULL)
-        done = torch.ByteTensor(N).fill_(0)
         cur_input = torch.LongTensor(N, 1).fill_(self.START).cuda()
         y_probs = []
+        policy_hist = []
         h, c = None, None
         for t in range(T):
-            # logprobs is N x 1 x V
+            # Compute logprobs
             logprobs, h, c = self.decoder(encoded, cur_input, h0=h, c0=c)
-            probs = F.softmax(logprobs.view(N, -1), dim=1)  # Now N x V
-            y_probs.append(probs)
-            _, cur_output = probs.max(1)
-            cur_output = cur_output.unsqueeze(1)
-            cur_output_data = cur_output.cpu()
-            not_done = logical_not(done)
-            y[:, t][not_done] = cur_output_data[not_done][0]
-            done = logical_or(done, cur_output_data.cpu().squeeze() == self.END)
-            cur_input = cur_output
-            if done.sum() == N:
+            probs = F.softmax(logprobs.view(N, -1), dim=-1)
+            if mode == 'soft':
+                y_probs.append(probs)
+                _, cur_input = probs.max(1)
+            elif mode == 'gumbel':
+                y_probs.append(F.gumbel_softmax(logprobs, hard=True))
+                _, cur_input = probs.max(1)
+            elif mode == 'hard':
+                # Distrubution probability
+                m = Categorical(probs)
+                # Sampling
+                action = m.sample()
+                # Create output vector (one-hot)
+                y = torch.zeros(1, probs.size(1)).cuda()
+                y[0, action.item()] = 1
+                y_probs.append(y)
+                # Update policy history
+                policy_hist.append(torch.squeeze(torch.matmul(y, probs.view(-1, 1))))
+
+            _, cur_input = probs.max(1)
+            cur_input = torch.unsqueeze(cur_input, 0)
+            # Stop if generated token is an end_token
+            if (cur_input[0].data == self.END and t >= 2) or t >= max_length:
                 break
 
+        if mode == 'hard':
+            self.policy_history.append(torch.stack(policy_hist))
         y_probs = torch.squeeze(torch.stack(y_probs, 1))
         return y_probs
 
-
-def logical_or(x, y):
-    return (x + y).clamp_(0, 1)
-
-
-def logical_not(x):
-    return x == 0
-
-
-def load_program_generator(checkpoint):
-    """ Loads the program generator model from `checkpoint`.
-
-    Parameters
-    ----------
-    checkpoint : Union[pathlib.Path, str]
-        The path to a checkpoint file.
-
-    Returns
-    -------
-    torch.nn.Module
-        The program generator model, which takes as input a question and produces a logical series
-        of operations that can be used to answer that question.
-    """
-    checkpoint = torch.load(str(checkpoint), map_location={'cuda:0': 'cpu'})
-    kwargs = checkpoint['program_generator_kwargs']
-    state = checkpoint['program_generator_state']
-    program_generator = _Seq2Seq(**kwargs)
-    program_generator.load_state_dict(state)
-    return program_generator
-
-
-def generate_single_program(question, program_generator):
-
-    program_generator.eval()
-    # generate a program
-    return program_generator.reinforce_sample(question)
-
-
-def generate_programs(h5_file, program_generator, dest_dir, batch_size):
-    """ Generate programs from a given HDF5 file containing questions.
-
-    Parameters
-    ----------
-    h5_file : Union[pathlib.Path, str]
-        Path to hdf5 file containing the questions and image-indices.
-
-    program_generator : torch.nn.Module
-        The program generation model to use to produce programs.
-
-    dest_dir : Union[pathlib.Path, str]
-        Path to store the output program, image index, and question .npy files.
-
-    batch_size : Integral
-        How many programs to process at once.
-
-    Returns
-    -------
-    None
-    """
-    with h5py.File(str(h5_file)) as questions_h5:
-        questions = np.asarray(questions_h5['questions'])
-        image_indices = np.asarray(questions_h5['image_idxs'])
-
-        if torch.cuda.is_available():
-            dtype = torch.cuda.FloatTensor
-        else:
-            dtype = torch.FloatTensor
-
-        program_generator.type(dtype).eval()
-
-        print('Generating programs...')
-        progs = []
-        for start_idx in range(0, len(questions), batch_size):
-            question_batch = questions[start_idx:start_idx + batch_size]
-            questions_var = torch.LongTensor(question_batch).type(dtype).long()
-            for question in questions_var:
-                program = program_generator.reinforce_sample(question.view(1, -1))
-                progs.append(program.cpu().numpy().squeeze())
-        progs = np.asarray(progs)
-
-    dest = Path(dest_dir)
-    path = dest / 'programs.npy'
-    np.save(path, progs)
-    print('Saved programs as {}'.format(path.absolute()))
-    path = dest / 'image_idxs.npy'
-    np.save(path, image_indices)
-    print('Saved image indices as {}'.format(path.absolute()))
-    path = dest / 'questions.npy'
-    np.save(path, questions)
-    print('Saved questions as {}'.format(path.absolute()))
+    def reinforce_backward(self, reward):
+        policy_loss = []
+        for sample, rew in zip(self.policy_history, reward):
+            policy_loss.append(torch.sum(torch.mul(torch.log(sample), rew).mul(-1), -1))
+        policy_loss = torch.stack(policy_loss).sum() / len(policy_loss)
+        policy_loss.backward()
+        self.policy_history = []

@@ -52,7 +52,8 @@ def load_model(args, vocab):
                             question_size=args.question_size,
                             n_answers=args.answer_size,
                             batch_size=args.batch_size,
-                            n_channel=args.n_channel
+                            n_channel=args.n_channel,
+                            decoder_mode=args.decoder_mode
                             ).cuda()
 
     return model

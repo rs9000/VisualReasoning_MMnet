@@ -2,8 +2,7 @@ import torch
 from torch import nn
 from controller import Exec_unary_module, Exec_binary_module
 import numpy as np
-from program_generator import load_program_generator
-from pathlib import Path
+from program_generator import Seq2Seq
 
 
 class Flatten(nn.Module):
@@ -12,7 +11,7 @@ class Flatten(nn.Module):
 
 
 class PG(nn.Module):
-    def __init__(self, vocab, question_size, stem_dim, n_channel, n_answers, batch_size, train_pg):
+    def __init__(self, vocab, question_size, stem_dim, n_channel, n_answers, batch_size, decoder_mode):
         super(PG, self).__init__()
 
         print("----------- Build Neural Network -----------")
@@ -22,15 +21,15 @@ class PG(nn.Module):
         self.stem_dim = stem_dim
         self.n_answers = n_answers+1
         self.batch_size = batch_size
+        self.decoder_mode = decoder_mode
         self.saved_output = None
-        self.train_pg = train_pg
         self.program_tokens = vocab['program_token_to_idx']
         self.program_idx = vocab['program_idx_to_token']
         self.conv_dim = self.stem_dim * self.stem_dim * 3 * 3
         self.addressing = []
 
         # Program generator
-        self.program_generator = load_program_generator(Path('checkpoint/program_generator.pt'))
+        self.program_generator = Seq2Seq()
 
         # Memory
         self.memory = None
@@ -59,6 +58,7 @@ class PG(nn.Module):
     def forward(self, feats, question):
 
         final_module_outputs = []
+        self.saved_output = None
 
         # Visual embedding
         v = self.stem(feats)
@@ -66,8 +66,6 @@ class PG(nn.Module):
         # Loop on batch
         for b in range(self.batch_size):
             self.addressing = []
-            self.saved_output = []
-
             # Features
             feat_input = v[b, :, :]
             feat_input = torch.unsqueeze(feat_input, 0)
@@ -75,15 +73,10 @@ class PG(nn.Module):
 
             # Program
             question_input = torch.unsqueeze(question[b, :], 0)
-
-            if self.train_pg:
-                prog_var = self.program_generator(question_input)
-            else:
-                prog_var = self.program_generator(question_input).detach()
+            prog_var = self.program_generator(question_input, mode=self.decoder_mode)
 
             # Loop on programs
             for i in reversed(range(prog_var.size(0))):
-
                 # Check most probably program type
                 progr_var_input = prog_var[i, :]
                 _, i_max = torch.max(progr_var_input.data, 0)
