@@ -148,10 +148,6 @@ class Exec_binary_module(nn.Module):
         return self.saved_map
 
     def forward(self, x1, x2, w1, w2, w3):
-
-        if x1 is None or x2 is None:
-            return x1
-
         x = torch.cat((x1, x2), 1)
         out1 = F.relu(F.conv2d(x, w1, padding=1))
         out = F.relu(F.conv2d(out1, w2, padding=1))

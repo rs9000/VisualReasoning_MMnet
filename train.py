@@ -3,6 +3,7 @@ import numpy as np
 import argparse
 from load_model import load_model
 from tensorboardX import SummaryWriter
+import torch.nn.functional as F
 from clevr_data import ClevrDataLoader, load_vocab
 from pathlib import Path
 import torchvision.utils as vutils
@@ -10,6 +11,7 @@ from torchvision import transforms
 from PIL import Image
 from PIL import ImageDraw
 from PIL import ImageFont
+import matplotlib.pyplot as plt
 import textwrap
 
 
@@ -31,15 +33,15 @@ def parse_arguments():
                         help='Number of features channels ', metavar='')
     parser.add_argument('--answer_size', type=int, default=31,
                         help='Number of words in answers dictionary', metavar='')
-    parser.add_argument('--batch_size', type=int, default=20,
+    parser.add_argument('--batch_size', type=int, default=15,
                         help='Batch size', metavar='')
     parser.add_argument('--min_grad', type=float, default=-10,
                         help='Minimum value of gradient clipping', metavar='')
     parser.add_argument('--max_grad', type=float, default=10,
                         help='Maximum value of gradient clipping', metavar='')
-    parser.add_argument('--load_model_path', type=str, default='./checkpoint/program_generator.pt',
+    parser.add_argument('--load_model_path', type=str, default='./checkpoint/PG_endtoend.45k.model',
                         help='Checkpoint path', metavar='')
-    parser.add_argument('--load_model_mode', type=str, default='PG',
+    parser.add_argument('--load_model_mode', type=str, default='EE',
                         help='Load model checkpoint (PG, EE, PG+EE)', metavar='')
     parser.add_argument('--save_model', type=bool, default=True,
                         help='Save model checkpoint', metavar='')
@@ -47,17 +49,37 @@ def parse_arguments():
                         help='Clevr dataset features,questions', metavar='')
     parser.add_argument('--clevr_val_images', type=str, default='/nas/softechict/CLEVR_v1.0/images/val/',
                         help='Clevr dataset validation images path', metavar='')
-    parser.add_argument('--num_iterations', type=int, default=5000,
+    parser.add_argument('--num_iterations', type=int, default=500,
                         help='Num iteration per epoch', metavar='')
-    parser.add_argument('--num_val_samples', type=int, default=1000,
+    parser.add_argument('--num_val_samples', type=int, default=100,
                         help='Num samples from test dataset', metavar='')
     parser.add_argument('--batch_multiplier', type=int, default=1,
                         help='Virtual batch size (min: 1)', metavar='')
-    parser.add_argument('--train_mode', type=str, default='EE',
+    parser.add_argument('--train_mode', type=str, default='PG',
                         help='Train mode (PG, EE, PG+EE)', metavar='')
-    parser.add_argument('--decoder_mode', type=str, default='soft',
+    parser.add_argument('--decoder_mode', type=str, default='hard+penalty',
                         help='Seq2seq decoder mode: (soft, gumbel, hard)', metavar='')
+    parser.add_argument('--use_curriculum', type=bool, default=True,
+                        help='Use curriculum to learn program generator', metavar='')
     return parser.parse_args()
+
+
+def plot_grad_flow(named_parameters):
+    ave_grads = []
+    layers = []
+    for n, p in named_parameters:
+        if p.requires_grad and ("bias" not in n) and (p.grad is not None):
+            layers.append(n)
+            ave_grads.append(p.grad.abs().mean())
+    plt.plot(ave_grads, alpha=0.3, color="b")
+    plt.hlines(0, 0, len(ave_grads)+1, linewidth=1, color="k")
+    plt.xticks(range(0,len(ave_grads), 1), layers, rotation="vertical")
+    plt.xlim(xmin=0, xmax=len(ave_grads))
+    plt.xlabel("Layers")
+    plt.ylabel("average gradient")
+    plt.title("Gradient flow")
+    plt.grid(True)
+    plt.show()
 
 
 def image_to_tensor(image_path, text):
@@ -115,6 +137,10 @@ def check_accuracy(val_loader, model, vocab):
                     question_text += vocab['question_idx_to_token'][int(q)] + " "
             pic = image_to_tensor(image_path, question_text + "?  A: " + answer_text)
             writer.add_image('Test Images', pic, num_samples)
+            if 'SAN' in args.model:
+                att_map = model.getData()
+                pic1 = vutils.make_grid(att_map, normalize=True, scale_each=True)
+                writer.add_image('Test Attention Map', pic1, num_samples)
 
         if num_samples >= args.num_val_samples or num_samples == len(val_loader):
             break
@@ -126,16 +152,22 @@ def check_accuracy(val_loader, model, vocab):
 
 def train_loop(model, train_loader, val_loader, vocab):
 
-    criterion = torch.nn.CrossEntropyLoss().cuda()
-    optimizer_pg = torch.optim.Adam([param for name, param in model.named_parameters()
-                                     if 'program_generator' in name], lr=1e-04)
-    optimizer_model = torch.optim.Adam([param for name, param in model.named_parameters()
-                                        if 'program_generator' not in name], lr=1e-04)
+    criterion = torch.nn.CrossEntropyLoss().to(device)
+    optimizer_model, optimizer_pg = None, None
+
+    if 'endtoend'in args.model:
+        optimizer_pg = torch.optim.Adam([param for name, param in model.named_parameters()
+                                         if 'program_generator' in name], lr=1e-04)
+        optimizer_model = torch.optim.Adam([param for name, param in model.named_parameters()
+                                            if 'program_generator' not in name], lr=1e-04)
+    else:
+        optimizer_model = torch.optim.Adam(model.parameters(), lr=1e-04)
 
     best_accuracy = float(0)
-    epoch = 0
-    t = 0
-    reward_moving_average = 0
+    t, epoch = 0, 0
+    raw_reward, reward_moving_average = 0, 0
+    raw_penalty = []
+    loss, rew_mean, entropy_a, entropy_b = 0, 0, 0, 0
 
     accuracy = check_accuracy(val_loader, model, vocab)
     writer.add_scalar('Test Accuracy', accuracy, 0)
@@ -161,8 +193,8 @@ def train_loop(model, train_loader, val_loader, vocab):
 
             _, preds = outs.data.cpu().max(1)
 
-            loss = criterion(outs, answers.to(device)) / args.batch_multiplier
-            if args.decoder_mode != 'hard':
+            if 'hard' not in args.decoder_mode:
+                loss = criterion(outs, answers.to(device)) / args.batch_multiplier
                 loss.backward()
 
             # Optimizer virtual-batch
@@ -170,13 +202,34 @@ def train_loop(model, train_loader, val_loader, vocab):
             if count == 0:
                 clip_grads(model)
                 if 'PG' in args.train_mode:
-                    if args.decoder_mode == 'hard':
-                        raw_reward = (preds == answers).float()
-                        reward_moving_average *= 0.9
-                        reward_moving_average += (1.0 - 0.9) * raw_reward.mean()
-                        centered_reward = raw_reward - reward_moving_average
+                    if 'hard' in args.decoder_mode:
                         optimizer_pg.zero_grad()
-                        model.program_generator.reinforce_backward(centered_reward.cuda())
+
+                        if 'penalty' in args.decoder_mode:
+                            # Penalty Baseline
+                            for p, a in zip(outs.to(device).data, answers.to(device).data):
+                                a_onehot = torch.zeros(outs.size(-1)).to(device)
+                                a_onehot[a] = 1
+                                # Reward = - Cross entropy loss
+                                raw_penalty.append(torch.sum(a_onehot * F.log_softmax(p)))
+                            raw_penalty = torch.stack(raw_penalty)
+                            # Baseline
+                            reward_moving_average *= 0.9
+                            reward_moving_average += (1.0 - 0.9) * raw_penalty.mean()
+                            centered_reward = raw_penalty - reward_moving_average
+                            raw_reward = raw_penalty
+                            raw_penalty = []
+                        else:
+                            # Reward Baseline
+                            raw_reward = (preds == answers).float()
+                            reward_moving_average *= 0.9
+                            reward_moving_average += (1.0 - 0.9) * raw_reward.mean()
+                            centered_reward = raw_reward - reward_moving_average
+
+                        # REINFORCE
+                        loss, rew_mean, entropy_a, entropy_b = model.program_generator.reinforce_backward(centered_reward.to(device))
+                        # GRADIENT DEBUG
+                        # plot_grad_flow(model.named_parameters())
                         optimizer_pg.step()
                     else:
                         optimizer_pg.step()
@@ -188,13 +241,11 @@ def train_loop(model, train_loader, val_loader, vocab):
 
             # Log on Tensorboard
             if t % 5 == 0:
-                print("Loss: ", loss.item()*args.batch_multiplier)
-                writer.add_scalar('Train Loss', loss.item()*args.batch_multiplier, t+epoch*args.num_iterations)
-
                 if 'SAN' in args.model:
                     att_map = model.getData()
                     pic1 = vutils.make_grid(att_map, normalize=True, scale_each=True)
                     writer.add_image('Attention Map', pic1, t+epoch*args.num_iterations)
+
                 elif "memory" in args.model or "endtoend" in args.model:
                     addr_u, addr_b = model.getData()
                     if addr_u:
@@ -204,13 +255,29 @@ def train_loop(model, train_loader, val_loader, vocab):
                         pic2 = vutils.make_grid(addr_b, normalize=True, scale_each=True)
                         writer.add_image('Addressing binary', pic2, t + epoch * args.num_iterations)
 
+                    if 'hard' not in args.decoder_mode:
+                        print("Loss: ", loss.item() * args.batch_multiplier)
+                        writer.add_scalar('Train Loss', loss.item() * args.batch_multiplier,
+                                          t + epoch * args.num_iterations)
+                    else:
+                        print("Norm Reward AVG: ", raw_reward.mean() * args.batch_multiplier)
+                        writer.add_scalar('Norm Reward AVG', raw_reward.mean() * args.batch_multiplier,
+                                          t + epoch * args.num_iterations)
+                        print("Policy Loss: ", loss.item() * args.batch_multiplier)
+                        writer.add_scalar('Policy Loss', loss.item() * args.batch_multiplier,
+                                          t + epoch * args.num_iterations)
+                        writer.add_scalar('Entropy_a', entropy_a.item() * args.batch_multiplier,
+                                          t + epoch * args.num_iterations)
+                        writer.add_scalar('Entropy_b', entropy_b.item() * args.batch_multiplier,
+                                          t + epoch * args.num_iterations)
+
             # Check accuracy on test dataset
             if t >= args.num_iterations:
                 t = 0
                 epoch += 1
                 accuracy = check_accuracy(val_loader, model, vocab)
                 writer.add_scalar('Test Accuracy', accuracy, epoch)
-                if accuracy >= best_accuracy and args.save_model:
+                if accuracy >= 0 and args.save_model:
                     best_accuracy = accuracy
                     torch.save(model.state_dict(), './checkpoint/' + args.model + '.model')
                 break
@@ -257,6 +324,7 @@ def load_checkpoint(model):
     # Load checkpoint, partial or full
     if args.load_model_mode != '':
         model_dict = model.state_dict()
+        print(args.load_model_path)
         checkpoint = torch.load(args.load_model_path)
         for key, val in checkpoint.copy().items():
             if 'program_generator' in key and args.load_model_mode == 'EE':

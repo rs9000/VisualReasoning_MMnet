@@ -11,7 +11,7 @@ class Flatten(nn.Module):
 
 
 class PG(nn.Module):
-    def __init__(self, vocab, question_size, stem_dim, n_channel, n_answers, batch_size, decoder_mode):
+    def __init__(self, vocab, question_size, stem_dim, n_channel, n_answers, batch_size, decoder_mode, use_curriculum):
         super(PG, self).__init__()
 
         print("----------- Build Neural Network -----------")
@@ -27,6 +27,9 @@ class PG(nn.Module):
         self.program_idx = vocab['program_idx_to_token']
         self.conv_dim = self.stem_dim * self.stem_dim * 3 * 3
         self.addressing = []
+        self.use_curriculum = use_curriculum
+        self.curriculum_step = 0
+        self.curriculum_len = 3
 
         # Program generator
         self.program_generator = Seq2Seq()
@@ -59,6 +62,14 @@ class PG(nn.Module):
 
         final_module_outputs = []
         self.saved_output = None
+        self.program_generator.init_policy()
+
+        # Curriculum learning program generator
+        if self.use_curriculum:
+            self.curriculum_step += 1
+            if self.curriculum_step % 1000 and self.curriculum_len < 30 == 0:
+                self.curriculum_len += 1
+                self.curriculum_step = 0
 
         # Visual embedding
         v = self.stem(feats)
@@ -73,7 +84,7 @@ class PG(nn.Module):
 
             # Program
             question_input = torch.unsqueeze(question[b, :], 0)
-            prog_var = self.program_generator(question_input, mode=self.decoder_mode)
+            prog_var = self.program_generator(question_input, mode=self.decoder_mode, max_length=self.curriculum_len).data
 
             # Loop on programs
             for i in reversed(range(prog_var.size(0))):
@@ -96,6 +107,7 @@ class PG(nn.Module):
 
                 # Binary Modules
                 if self.isBinary(module_type):
+                    if self.saved_output is None: continue
                     w1, w2, w3 = self.load_binary_module(progr_var_input)
                     output = self.exec_binary_module(output, self.saved_output, w1, w2, w3)
 
@@ -144,6 +156,7 @@ class PG(nn.Module):
         # Initialize stuff
         stdev = 1 / (np.sqrt(self.conv_dim))
         self.memory = nn.Parameter(nn.init.uniform_((torch.Tensor(44, self.conv_dim*4).cuda()), -stdev, stdev))
+        self.curriculum_len = 5 if self.use_curriculum else 30
 
     def isBinary(self, module_type):
         # Check program is unary or binary
