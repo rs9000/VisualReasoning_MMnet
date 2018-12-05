@@ -5,9 +5,12 @@ https://arxiv.org/pdf/1511.02274.pdf<br><br>
 **Module network**:<br>
 https://arxiv.org/pdf/1705.03633.pdf<br><br>
 Yes, but what's new? <br>
-Try to archive same performance in end-to-end differentiable architecture: <br><br>
+Try to archive same performance in end-to-end differentiable architecture: <br>
 **Module memory network** [new]<br>
-**Module memory network end2end differentiable** [new] <br>
+**Module memory network end2end differentiable** [new] <br><br>
+Try to archive weak supervision: <br>
+(**Work in progress**) <br>
+
 
 ## Test sample
 <img src="pics/pg_sample.jpg" width="300">
