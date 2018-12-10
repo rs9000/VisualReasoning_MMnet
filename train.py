@@ -39,9 +39,9 @@ def parse_arguments():
                         help='Minimum value of gradient clipping', metavar='')
     parser.add_argument('--max_grad', type=float, default=10,
                         help='Maximum value of gradient clipping', metavar='')
-    parser.add_argument('--load_model_path', type=str, default='./checkpoint/PG_endtoend.45k.model',
+    parser.add_argument('--load_model_path', type=str, default='./checkpoint/PG_endtoend.combined.model',
                         help='Checkpoint path', metavar='')
-    parser.add_argument('--load_model_mode', type=str, default='EE',
+    parser.add_argument('--load_model_mode', type=str, default='PG+EE',
                         help='Load model checkpoint (PG, EE, PG+EE)', metavar='')
     parser.add_argument('--save_model', type=bool, default=True,
                         help='Save model checkpoint', metavar='')
@@ -49,9 +49,9 @@ def parse_arguments():
                         help='Clevr dataset features,questions', metavar='')
     parser.add_argument('--clevr_val_images', type=str, default='/nas/softechict/CLEVR_v1.0/images/val/',
                         help='Clevr dataset validation images path', metavar='')
-    parser.add_argument('--num_iterations', type=int, default=500,
+    parser.add_argument('--num_iterations', type=int, default=1000,
                         help='Num iteration per epoch', metavar='')
-    parser.add_argument('--num_val_samples', type=int, default=100,
+    parser.add_argument('--num_val_samples', type=int, default=200,
                         help='Num samples from test dataset', metavar='')
     parser.add_argument('--batch_multiplier', type=int, default=1,
                         help='Virtual batch size (min: 1)', metavar='')
@@ -59,7 +59,7 @@ def parse_arguments():
                         help='Train mode (PG, EE, PG+EE)', metavar='')
     parser.add_argument('--decoder_mode', type=str, default='hard+penalty',
                         help='Seq2seq decoder mode: (soft, gumbel, hard)', metavar='')
-    parser.add_argument('--use_curriculum', type=bool, default=True,
+    parser.add_argument('--use_curriculum', type=bool, default=False,
                         help='Use curriculum to learn program generator', metavar='')
     return parser.parse_args()
 
@@ -165,9 +165,10 @@ def train_loop(model, train_loader, val_loader, vocab):
 
     best_accuracy = float(0)
     t, epoch = 0, 0
-    raw_reward, reward_moving_average = 0, 0
-    raw_penalty = []
+    raw_reward, raw_penalty, reward_moving_average, penalty_moving_average = 0, 0, 0, 0
     loss, rew_mean, entropy_a, entropy_b = 0, 0, 0, 0
+    centered_reward, centered_penalty = 0, 0
+    q_fun = 0
 
     accuracy = check_accuracy(val_loader, model, vocab)
     writer.add_scalar('Test Accuracy', accuracy, 0)
@@ -176,7 +177,6 @@ def train_loop(model, train_loader, val_loader, vocab):
         print('------- Starting epoch %d ---------' % epoch)
         torch.set_grad_enabled(True)
         count = 1
-
         for question, _, feats, answers, programs in train_loader:
             # Check batch_size
             if not (question.size(0) == feats.size(0) and feats.size(0) == args.batch_size):
@@ -200,34 +200,32 @@ def train_loop(model, train_loader, val_loader, vocab):
             # Optimizer virtual-batch
             count -= 1
             if count == 0:
-                clip_grads(model)
                 if 'PG' in args.train_mode:
                     if 'hard' in args.decoder_mode:
                         optimizer_pg.zero_grad()
 
                         if 'penalty' in args.decoder_mode:
+                            # Penalty = Cross entropy loss(Y, Y_pred)
+                            raw_penalty = F.nll_loss(F.log_softmax(outs.to(device).data, -1), answers.to(device).data,
+                                                     reduction='none').neg()
+
                             # Penalty Baseline
-                            for p, a in zip(outs.to(device).data, answers.to(device).data):
-                                a_onehot = torch.zeros(outs.size(-1)).to(device)
-                                a_onehot[a] = 1
-                                # Reward = - Cross entropy loss
-                                raw_penalty.append(torch.sum(a_onehot * F.log_softmax(p)))
-                            raw_penalty = torch.stack(raw_penalty)
-                            # Baseline
-                            reward_moving_average *= 0.9
-                            reward_moving_average += (1.0 - 0.9) * raw_penalty.mean()
-                            centered_reward = raw_penalty - reward_moving_average
-                            raw_reward = raw_penalty
-                            raw_penalty = []
-                        else:
-                            # Reward Baseline
-                            raw_reward = (preds == answers).float()
-                            reward_moving_average *= 0.9
-                            reward_moving_average += (1.0 - 0.9) * raw_reward.mean()
-                            centered_reward = raw_reward - reward_moving_average
+                            penalty_moving_average *= 0.9
+                            penalty_moving_average += (1.0 - 0.9) * raw_penalty.mean()
+                            centered_penalty = (raw_penalty - penalty_moving_average).to(device)
+
+                        # Reward Baseline
+                        raw_reward = (preds == answers).float()
+                        reward_moving_average *= 0.9
+                        reward_moving_average += (1.0 - 0.9) * raw_reward.mean()
+                        centered_reward = (raw_reward - reward_moving_average).to(device)
 
                         # REINFORCE
-                        loss, rew_mean, entropy_a, entropy_b = model.program_generator.reinforce_backward(centered_reward.to(device))
+                        if 'penalty' in args.decoder_mode:
+                            loss, rew_mean, entropy_a, entropy_b = model.program_generator.reinforce_penalty(centered_reward, centered_penalty)
+                        else:
+                            loss, rew_mean, entropy_a, entropy_b = model.program_generator.reinforce_reward(centered_reward)
+
                         # GRADIENT DEBUG
                         # plot_grad_flow(model.named_parameters())
                         optimizer_pg.step()
@@ -260,12 +258,15 @@ def train_loop(model, train_loader, val_loader, vocab):
                         writer.add_scalar('Train Loss', loss.item() * args.batch_multiplier,
                                           t + epoch * args.num_iterations)
                     else:
-                        print("Norm Reward AVG: ", raw_reward.mean() * args.batch_multiplier)
+                        # print("Norm Reward AVG: ", raw_reward.mean() * args.batch_multiplier)
                         writer.add_scalar('Norm Reward AVG', raw_reward.mean() * args.batch_multiplier,
                                           t + epoch * args.num_iterations)
-                        print("Policy Loss: ", loss.item() * args.batch_multiplier)
+                        # print("Policy Loss: ", loss.item() * args.batch_multiplier)
                         writer.add_scalar('Policy Loss', loss.item() * args.batch_multiplier,
                                           t + epoch * args.num_iterations)
+                        if 'penalty' in args.decoder_mode:
+                            writer.add_scalar('Cross entropy Loss', raw_penalty.mean() * args.batch_multiplier,
+                                              t + epoch * args.num_iterations)
                         writer.add_scalar('Entropy_a', entropy_a.item() * args.batch_multiplier,
                                           t + epoch * args.num_iterations)
                         writer.add_scalar('Entropy_b', entropy_b.item() * args.batch_multiplier,
